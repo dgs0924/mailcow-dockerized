@@ -555,6 +555,15 @@
           </div>
           <div class="row mb-2">
             <div class="col-md-3 d-flex align-items-center justify-content-md-end">
+              <label class="control-label" for="iam_ldap_mailbox_domain">{{ lang.admin.iam_ldap_mailbox_domain }}:</label>
+            </div>
+            <div class="col-12 col-md-9 col-lg-4">
+              <input type="text" class="form-control" placeholder="cqzhgz.cn" id="iam_ldap_mailbox_domain" name="mailbox_domain" value="{{ iam_settings.mailbox_domain|default('') }}">
+              <small class="text-muted">{{ lang.admin.iam_ldap_mailbox_domain_info }}</small>
+            </div>
+          </div>
+          <div class="row mb-2">
+            <div class="col-md-3 d-flex align-items-center justify-content-md-end">
               <label class="control-label" for="iam_ldap_filter">{{ lang.admin.filter }}:</label>
             </div>
             <div class="col-12 col-md-9 col-lg-4">

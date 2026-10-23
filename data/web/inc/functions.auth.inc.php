@@ -632,8 +632,9 @@ function ldap_mbox_login($user, $pass, $extra = null){
   global $iam_provider;
   global $iam_settings;
 
-  $is_internal = $extra['is_internal'];
-  $create = $extra['create'];
+  $extra = is_array($extra) ? $extra : array();
+  $is_internal = !empty($extra['is_internal']);
+  $create = !empty($extra['create']);
 
   if (!filter_var($user, FILTER_VALIDATE_EMAIL) && !ctype_alnum(str_replace(array('_', '.', '-'), '', $user))) {
     if (!$is_internal){
@@ -649,15 +650,42 @@ function ldap_mbox_login($user, $pass, $extra = null){
     return false;
   }
 
+  $ldap_username = ldap_username_from_mailbox_username($user, $iam_settings);
+  if ($ldap_username === false) {
+    if (!$is_internal){
+      $_SESSION['return'][] =  array(
+        'type' => 'danger',
+        'log' => array(__FUNCTION__, $user, '*'),
+        'msg' => 'malformed_username'
+      );
+    }
+    return false;
+  }
+
+  $mailbox_domain = ldap_mailbox_domain($iam_settings);
+  if ($mailbox_domain === false) {
+    return false;
+  }
+
   try {
     $ldap_query = $iam_provider->query();
     if (!empty($iam_settings['filter'])) {
       $ldap_query = $ldap_query->rawFilter($iam_settings['filter']);
     }
-    $ldap_query = $ldap_query->where($iam_settings['username_field'], '=', $user)
+    $ldap_query = $ldap_query->where($iam_settings['username_field'], '=', $ldap_username)
       ->select([$iam_settings['username_field'], $iam_settings['attribute_field'], 'displayname', 'distinguishedname', 'dn']);
 
-    $user_res = $ldap_query->firstOrFail();
+    if ($mailbox_domain === '') {
+      $user_res = $ldap_query->firstOrFail();
+    } else {
+      $user_results = $ldap_query->limit(2)->get();
+      if (!is_countable($user_results) || count($user_results) !== 1) {
+        throw new Exception('LDAP username must resolve to exactly one entry');
+      }
+      foreach ($user_results as $user_res) {
+        break;
+      }
+    }
   } catch (Exception $e) {
     // clear $_SESSION['return'] to not leak data
     $_SESSION['return'] = array();
@@ -667,6 +695,14 @@ function ldap_mbox_login($user, $pass, $extra = null){
       'msg' => 'generic_server_error'
     );
     return false;
+  }
+
+  $mailbox_username = $user;
+  if ($mailbox_domain !== '') {
+    $mailbox_username = ldap_mailbox_username($user_res[$iam_settings['username_field']][0] ?? '', $iam_settings);
+    if ($mailbox_username === false || strcasecmp($mailbox_username, $user) !== 0) {
+      return false;
+    }
   }
   try {
     if (!$iam_provider->auth()->attempt($user_res['dn'], $pass)) {
@@ -693,7 +729,7 @@ function ldap_mbox_login($user, $pass, $extra = null){
       // update user
       $_SESSION['access_all_exception'] = '1';
       mailbox('edit', 'mailbox_from_template', array(
-        'username' => $user,
+        'username' => $mailbox_username,
         'name' => $user_res['displayname'][0],
         'template' => $iam_settings['templates'][$mapper_key]
       ));
@@ -732,8 +768,8 @@ function ldap_mbox_login($user, $pass, $extra = null){
   // create mailbox
   $_SESSION['access_all_exception'] = '1';
   $create_res = mailbox('add', 'mailbox_from_template', array(
-    'domain' => explode('@', $user)[1],
-    'local_part' => explode('@', $user)[0],
+    'domain' => explode('@', $mailbox_username)[1],
+    'local_part' => explode('@', $mailbox_username)[0],
     'name' => $user_res['displayname'][0],
     'authsource' => 'ldap',
     'template' => $mbox_template

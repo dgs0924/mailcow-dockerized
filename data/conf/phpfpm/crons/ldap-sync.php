@@ -76,6 +76,13 @@ if ($iam_settings['authsource'] != "ldap" || (intval($iam_settings['periodic_syn
   session_destroy();
   exit;
 }
+$mailbox_domain = ldap_mailbox_domain($iam_settings);
+if ($mailbox_domain === false) {
+  logMsg("err", "LDAP mailbox domain is invalid");
+  session_destroy();
+  exit;
+}
+$mapped_mailbox_usernames = array();
 
 // Set pagination variables
 $start = 0;
@@ -121,8 +128,36 @@ $response = $ldap_query->where($iam_settings['username_field'], "*")
   ->select([$iam_settings['username_field'], $iam_settings['attribute_field'], 'displayname'])
   ->paginate($max);
 
-// Process the users
+$ldap_users = array();
 foreach ($response as $user) {
+  $ldap_users[] = $user;
+}
+
+if ($mailbox_domain !== '') {
+  $mapped_mailbox_usernames = ldap_mapped_mailbox_username_counts($ldap_users, $iam_settings);
+}
+
+// Process the users
+foreach ($ldap_users as $user) {
+  $ldap_username = $user[$iam_settings['username_field']][0] ?? '';
+  if (empty($ldap_username)){
+    logMsg("warning", "Skipping user " . $user['displayname'][0] . " due to empty LDAP ". $iam_settings['username_field'] . " property.");
+    continue;
+  }
+
+  $mailbox_username = ldap_mailbox_username($ldap_username, $iam_settings);
+  if ($mailbox_username === false) {
+    logMsg("warning", "Skipping user " . $user['displayname'][0] . " due to invalid LDAP ". $iam_settings['username_field'] . " property.");
+    continue;
+  }
+  if ($mailbox_domain !== '') {
+    $mailbox_username_key = strtolower($mailbox_username);
+    if ($mapped_mailbox_usernames[$mailbox_username_key] > 1) {
+      logMsg("warning", "Skipping duplicate mapped mailbox " . $mailbox_username);
+      continue;
+    }
+  }
+
   // try get mailbox user
   $stmt = $pdo->prepare("SELECT
     mailbox.*,
@@ -131,17 +166,12 @@ foreach ($response as $user) {
     INNER JOIN domain on mailbox.domain = domain.domain
     WHERE `kind` NOT REGEXP 'location|thing|group'
       AND `username` = :user");
-  $stmt->execute(array(':user' => $user[$iam_settings['username_field']][0]));
+  $stmt->execute(array(':user' => $mailbox_username));
   $row = $stmt->fetch(PDO::FETCH_ASSOC);
 
   // check if matching attribute mapping exists
   $user_template = $user[$iam_settings['attribute_field']][0];
   $mapper_key = array_search($user_template, $iam_settings['mappers']);
-
-  if (empty($user[$iam_settings['username_field']][0])){
-    logMsg("warning", "Skipping user " . $user['displayname'][0] . " due to empty LDAP ". $iam_settings['username_field'] . " property.");
-    continue;
-  }
 
   $_SESSION['access_all_exception'] = '1';
   if (!$row && intval($iam_settings['import_users']) == 1){
@@ -149,41 +179,41 @@ foreach ($response as $user) {
       if (!empty($iam_settings['default_template'])) {
         $mbox_template = $iam_settings['default_template'];
       } else {
-        logMsg("warning", "No matching attribute mapping found for user " . $user[$iam_settings['username_field']][0]);
+        logMsg("warning", "No matching attribute mapping found for user " . $mailbox_username);
         continue;
       }
     } else {
       $mbox_template = $iam_settings['templates'][$mapper_key];
     }
     // mailbox user does not exist, create...
-    logMsg("info", "Creating user " .  $user[$iam_settings['username_field']][0]);
+    logMsg("info", "Creating user " .  $mailbox_username);
     $create_res = mailbox('add', 'mailbox_from_template', array(
-      'domain' => explode('@',  $user[$iam_settings['username_field']][0])[1],
-      'local_part' => explode('@',  $user[$iam_settings['username_field']][0])[0],
+      'domain' => explode('@', $mailbox_username)[1],
+      'local_part' => explode('@', $mailbox_username)[0],
       'name' => $user['displayname'][0],
       'authsource' => 'ldap',
       'template' => $mbox_template
     ));
     if (!$create_res){
-      logMsg("err", "Could not create user " . $user[$iam_settings['username_field']][0]);
+      logMsg("err", "Could not create user " . $mailbox_username);
       continue;
     }
   } else if ($row && intval($iam_settings['periodic_sync']) == 1 && $row['authsource'] == "ldap") {
     if ($mapper_key === false){
-      logMsg("warning", "No matching attribute mapping found for user " . $user[$iam_settings['username_field']][0]);
+      logMsg("warning", "No matching attribute mapping found for user " . $mailbox_username);
       continue;
     }
     $mbox_template = $iam_settings['templates'][$mapper_key];
     // mailbox user does exist, sync attribtues...
-    logMsg("info", "Syncing attributes for user " . $user[$iam_settings['username_field']][0]);
+    logMsg("info", "Syncing attributes for user " . $mailbox_username);
     mailbox('edit', 'mailbox_from_template', array(
-      'username' =>  $user[$iam_settings['username_field']][0],
+      'username' => $mailbox_username,
       'name' => $user['displayname'][0],
       'template' => $mbox_template
     ));
   } else {
     // skip mailbox user
-    logMsg("info", "Skipping user " .  $user[$iam_settings['username_field']][0]);
+    logMsg("info", "Skipping user " . $mailbox_username);
   }
   $_SESSION['access_all_exception'] = '0';
 

@@ -1252,6 +1252,73 @@ function is_valid_domain_name($domain_name, $options = array()) {
        && preg_match("/^.{1,253}$/", $domain_name)
        && preg_match("/^[^\.]{1,63}(\.[^\.]{1,63})*$/", $domain_name));
 }
+function ldap_mailbox_domain($iam_settings) {
+  if (!is_array($iam_settings) || !isset($iam_settings['mailbox_domain'])) {
+    return '';
+  }
+
+  $mailbox_domain = strtolower(trim((string)$iam_settings['mailbox_domain']));
+  if ($mailbox_domain === '') {
+    return '';
+  }
+
+  if (preg_match('/[^\x00-\x7F]/', $mailbox_domain)
+      || filter_var($mailbox_domain, FILTER_VALIDATE_DOMAIN, FILTER_FLAG_HOSTNAME) === false) {
+    return false;
+  }
+
+  return $mailbox_domain;
+}
+function ldap_mailbox_username($ldap_username, $iam_settings) {
+  $mailbox_domain = ldap_mailbox_domain($iam_settings);
+  if ($mailbox_domain === false) {
+    return false;
+  }
+
+  if ($mailbox_domain === '') {
+    return $ldap_username;
+  }
+
+  $mailbox_username = (string)$ldap_username . '@' . $mailbox_domain;
+  return filter_var($mailbox_username, FILTER_VALIDATE_EMAIL) === false ? false : $mailbox_username;
+}
+function ldap_username_from_mailbox_username($mailbox_username, $iam_settings) {
+  $mailbox_domain = ldap_mailbox_domain($iam_settings);
+  if ($mailbox_domain === false) {
+    return false;
+  }
+
+  if ($mailbox_domain === '') {
+    return $mailbox_username;
+  }
+
+  if (filter_var($mailbox_username, FILTER_VALIDATE_EMAIL) === false) {
+    return false;
+  }
+
+  list($ldap_username, $login_domain) = explode('@', $mailbox_username, 2);
+  if (strcasecmp($login_domain, $mailbox_domain) !== 0) {
+    return false;
+  }
+
+  return $ldap_username;
+}
+function ldap_mapped_mailbox_username_counts($ldap_users, $iam_settings) {
+  $mailbox_usernames = array();
+  foreach ($ldap_users as $user) {
+    $ldap_username = $user[$iam_settings['username_field']][0] ?? '';
+    $mailbox_username = ldap_mailbox_username($ldap_username, $iam_settings);
+    if ($mailbox_username === false) {
+      continue;
+    }
+    $mailbox_username = strtolower($mailbox_username);
+    if (!isset($mailbox_usernames[$mailbox_username])) {
+      $mailbox_usernames[$mailbox_username] = 0;
+    }
+    $mailbox_usernames[$mailbox_username]++;
+  }
+  return $mailbox_usernames;
+}
 function set_tfa($_data) {
   global $pdo;
   global $yubi;
@@ -2482,6 +2549,7 @@ function identity_provider($_action = null, $_data = null, $_extra = null) {
   $data_log = $_data;
   if (isset($data_log['client_secret'])) $data_log['client_secret'] = '*';
   if (isset($data_log['access_token'])) $data_log['access_token'] = '*';
+  if (isset($data_log['bindpass'])) $data_log['bindpass'] = '*';
 
   switch ($_action) {
     case 'get':
@@ -2521,6 +2589,7 @@ function identity_provider($_action = null, $_data = null, $_extra = null) {
       }
       // return default ldap options
       if ($settings["authsource"] == "ldap"){
+        $settings['mailbox_domain'] = !isset($settings['mailbox_domain']) ? '' : $settings['mailbox_domain'];
         $settings['use_ssl'] = !isset($settings['use_ssl']) ? false : $settings['use_ssl'];
         $settings['use_tls'] = !isset($settings['use_tls']) ? false : $settings['use_tls'];
         $settings['ignore_ssl_errors'] = !isset($settings['ignore_ssl_errors']) ? false : $settings['ignore_ssl_errors'];
@@ -2598,6 +2667,7 @@ function identity_provider($_action = null, $_data = null, $_extra = null) {
           $_data['host']              = (!empty($_data['host'])) ? str_replace(" ", "", $_data['host']) : "";
           $_data['port']              = (!empty($_data['port'])) ? intval($_data['port']) : 389;
           $_data['username_field']    = (!empty($_data['username_field'])) ? strtolower($_data['username_field']) : "mail";
+          $_data['mailbox_domain']    = isset($_data['mailbox_domain']) ? strtolower(trim($_data['mailbox_domain'])) : "";
           $_data['attribute_field']   = (!empty($_data['attribute_field'])) ? strtolower($_data['attribute_field']) : "";
           $_data['filter']            = (!empty($_data['filter'])) ? $_data['filter'] : "";
           $_data['periodic_sync']     = isset($_data['periodic_sync']) ? intval($_data['periodic_sync']) : 0;
@@ -2606,7 +2676,15 @@ function identity_provider($_action = null, $_data = null, $_extra = null) {
           $_data['use_tls']           = isset($_data['use_tls']) && !$_data['use_ssl'] ? boolval($_data['use_tls']) : false;
           $_data['sync_interval']     = (!empty($_data['sync_interval'])) ? intval($_data['sync_interval']) : 15;
           $_data['sync_interval']     = $_data['sync_interval'] < 1 ? 1 : $_data['sync_interval'];
-          $required_settings          = array('authsource', 'host', 'port', 'basedn', 'username_field', 'filter', 'attribute_field', 'binddn', 'bindpass', 'periodic_sync', 'import_users', 'sync_interval', 'use_ssl', 'use_tls', 'ignore_ssl_error', 'login_provisioning');
+          if (ldap_mailbox_domain($_data) === false) {
+            $_SESSION['return'][] = array(
+              'type' => 'danger',
+              'log' => array(__FUNCTION__, $_action, $data_log),
+              'msg' => array('domain_invalid', htmlspecialchars($_data['mailbox_domain']))
+            );
+            return false;
+          }
+          $required_settings          = array('authsource', 'host', 'port', 'basedn', 'username_field', 'mailbox_domain', 'filter', 'attribute_field', 'binddn', 'bindpass', 'periodic_sync', 'import_users', 'sync_interval', 'use_ssl', 'use_tls', 'ignore_ssl_error', 'login_provisioning');
         break;
       }
 

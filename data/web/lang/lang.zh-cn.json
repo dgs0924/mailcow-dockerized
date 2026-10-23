@@ -391,6 +391,8 @@
         "iam_test_connection": "测试连接",
         "iam_token_url": "Token endpoint",
         "iam_userinfo_url": "User info endpoint",
+        "iam_ldap_mailbox_domain": "LDAP 邮箱域名",
+        "iam_ldap_mailbox_domain_info": "可选。将登录字段的值拼成邮箱地址，例如 mobile 字段 + cqzhgz.cn。请使用完整邮箱地址登录。LDAP 字段已是邮箱地址时请留空。须先在 mailcow 添加该域名；已有邮箱不会自动改名。",
         "iam_username_field": "Username 域",
         "iam_binddn": "Bind DN",
         "iam_use_ssl": "使用 SSL",

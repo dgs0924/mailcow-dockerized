@@ -252,6 +252,8 @@
         "iam_test_connection": "Test Connection",
         "iam_token_url": "Token endpoint",
         "iam_userinfo_url": "User info endpoint",
+        "iam_ldap_mailbox_domain": "LDAP mailbox domain",
+        "iam_ldap_mailbox_domain_info": "Optional. Append this domain to the Username Field value (for example mobile + cqzhgz.cn). Sign in with the full email address. Leave empty when the LDAP field already contains an email address. The domain must exist in mailcow; existing mailboxes are not renamed.",
         "iam_username_field": "Username Field",
         "iam_binddn": "Bind DN",
         "iam_use_ssl": "Use SSL",
